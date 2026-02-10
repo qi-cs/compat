@@ -505,6 +505,8 @@ class DynInst : public ExecContext, public RefCounted
      * fault. There should be a better mechanism in place. */
     Fault& getFault() { return fault; }
 
+    Addr getInstAddr();
+
     /** Checks whether or not this instruction has had its branch target
      *  calculated yet.  For now it is not utilized and is hacked to be
      *  always false.

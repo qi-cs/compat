@@ -301,6 +301,11 @@ DynInst::dump(std::string &outstring)
     outstring = s.str();
 }
 
+Addr
+DynInst::getInstAddr(){
+    return pc->instAddr();
+}
+
 void
 DynInst::markSrcRegReady()
 {

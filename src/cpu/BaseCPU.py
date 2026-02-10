@@ -151,6 +151,7 @@ class BaseCPU(ClockedObject):
         "Leave the CPU switched out after startup (used when switching "
         "between CPU models)",
     )
+    isStoreReqRecordEn = Param.Bool(False, "collect wr request for each pc")
 
     model_reset = ResetResponsePort("Generic reset for the CPU")
 
@@ -162,6 +163,9 @@ class BaseCPU(ClockedObject):
     )
 
     tracer = Param.InstTracer(default_tracer, "Instruction tracer")
+    objConfThres = Param.Unsigned(8, "Object Confidence Threshold")
+
+    objIdenEntryNum = Param.Unsigned(128, "Object Identifier Entry Number")
 
     icache_port = RequestPort("Instruction Port")
     dcache_port = RequestPort("Data Port")

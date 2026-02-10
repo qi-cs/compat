@@ -105,7 +105,7 @@ class Multi : public Base
     Multi(const Params &p);
     ~Multi();
 
-    void setCache(BaseCache *_cache) override;
+    void setCache(ClockedObject *_cache) override;
 
     std::unique_ptr<Base::CompressionData> compress(
         const std::vector<Base::Chunk>& chunks,

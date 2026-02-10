@@ -1,7 +1,14 @@
-# -*- mode:python -*-
-
-# Copyright (c) 2018 Inria
+# Copyright (c) 2012, 2016, 2018, 2019 ARM Limited
 # All rights reserved.
+#
+# The license below extends only to copyright in the software and shall
+# not be construed as granting a license to any other intellectual
+# property including but not limited to intellectual property relating
+# to a hardware implementation of the functionality of the software
+# licensed hereunder.  You may use the software subject to the license
+# terms below provided that you ensure that this notice is replicated
+# unmodified and in its entirety in all distributions of the software,
+# modified or unmodified, in source code or in binary form.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
@@ -26,28 +33,14 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-Import('*')
+from m5.objects.ClockedObject import ClockedObject
+from m5.objects.Compressors import BaseCacheCompressor
+from m5.params import *
+from m5.proxy import *
 
-SimObject('Compressors.py', sim_objects=[
-    'BaseCacheCompressor', 'BaseDictionaryCompressor',
-    'Base64Delta8', 'Base64Delta16', 'Base64Delta32',
-    'Base32Delta8', 'Base32Delta16', 'Base16Delta8',
-    'CPack', 'FPC', 'FPCD', 'FrequentValuesCompressor', 'MultiCompressor',
-    'PerfectCompressor', 'RepeatedQwordsCompressor', 'ZeroCompressor'])
 
-SimObject('BaseCompAlgorithm.py', sim_objects=['BaseCompAlgorithm'])
-
-Source('base.cc')
-Source('base_dictionary_compressor.cc')
-Source('base_delta.cc')
-Source('cpack.cc')
-Source('fpc.cc')
-Source('fpcd.cc')
-Source('frequent_values.cc')
-Source('multi.cc')
-Source('perfect.cc')
-Source('repeated_qwords.cc')
-Source('zero.cc')
-
-Source('base_comp_algorithm.cc')
-DebugFlag('BaseCompAlgorithm')
+class BaseCompAlgorithm(ClockedObject):
+    type = "BaseCompAlgorithm"
+    abstract = False
+    cxx_header = "mem/cache/compressors/base_comp_algorithm.hh"
+    cxx_class = "gem5::compression::BaseCompAlgorithm"

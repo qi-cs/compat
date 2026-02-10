@@ -33,12 +33,19 @@ def upgrader(cpt):
     Update the checkpoint to include the XCR0 register if X86 checkpoint.
     The value is set to the default of 1.
     """
-
     import re
+
+    def get_isa_name(sec):
+        """Return ISA name for section; old checkpoints may lack isaName (use root.isa)."""
+        if cpt.has_option(sec, "isaName"):
+            return cpt.get(sec, "isaName")
+        if cpt.has_option("root", "isa"):
+            return cpt.get("root", "isa")
+        return ""
 
     for sec in cpt.sections():
         if re.search(r".*sys.*\.cpu.*\.isa$", sec):
-            if cpt.get(sec, "isaName") == "x86":
+            if get_isa_name(sec) == "x86":
                 regVals = cpt.get(sec, "regVal")
 
                 # Add the default value of XCR0 (1) if missing

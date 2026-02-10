@@ -47,6 +47,7 @@
 #include <list>
 #include <map>
 #include <queue>
+#include <set>
 #include <vector>
 
 #include "arch/generic/mmu.hh"
@@ -66,18 +67,225 @@ namespace gem5
 
 struct BaseO3CPUParams;
 
+namespace memory {
+    class MemCtrl;
+}
 namespace o3
 {
 
 class CPU;
 class IEW;
 class LSQUnit;
+class WrReqRecorder
+{
+public:
+    Addr pc;
+    uint32_t offset;
+    uint32_t length;
+
+    WrReqRecorder (Addr pc_,
+        uint32_t offset_,
+        uint32_t length_) :
+        pc(pc_),
+        offset(offset_),
+        length(length_) {
+    }
+
+    std::string dump() {
+        std::stringstream ss;
+        //ss << std::hex << " pc " << pc;
+        ss << std::hex << pc;
+        ss << std::dec << " : " <<  offset;
+        ss << std::dec << " - " <<  length;
+        return ss.str();
+    };
+};
+
+class WrRecorder
+{
+public:
+    Addr     pageAddr = 0;
+    uint32_t minObjSize = 0;
+    uint32_t lastAddr = 0;
+    uint32_t firstAddr = 0;
+    uint32_t counter = 0;
+    bool     skip = false;
+    bool     highConf = false;
+
+    WrRecorder() = default;
+    WrRecorder& operator=(const WrRecorder& other) = default;
+
+    WrRecorder (Addr pageAddr_,
+        uint32_t minObjSize_,
+        uint32_t lastAddr_,
+        uint32_t firstAddr_,
+        uint32_t counter_,
+        bool     skip_) :
+        pageAddr(pageAddr_),
+        minObjSize(minObjSize_),
+        lastAddr(lastAddr_),
+        firstAddr(firstAddr_),
+        counter(counter_),
+        skip(skip_) {
+    }
+
+    WrRecorder(const WrRecorder& wrRecorder_) {
+        pageAddr    = wrRecorder_.pageAddr;
+        minObjSize  = wrRecorder_.minObjSize;
+        lastAddr    = wrRecorder_.lastAddr;
+        firstAddr   = wrRecorder_.firstAddr;
+        counter     = wrRecorder_.counter;
+        skip        = wrRecorder_.skip;
+    }
+
+    std::string dump() {
+        std::stringstream ss;
+        //ss << std::hex << " pc " << pc;
+        ss << std::hex << " PageAddr: " <<  pageAddr;
+        ss << std::dec << " Obj: " <<  minObjSize;
+        ss << std::dec << " Cnter: " <<  counter;
+        ss << " Skip: " << (skip ? "Y" : "N");
+        return ss.str();
+    };
+};
+
+class TLBExInfo
+{
+public:
+    Addr pc;
+    uint32_t objSize = 0;
+    uint32_t offset = 0;
+
+    TLBExInfo()  = default;
+    TLBExInfo& operator=(const TLBExInfo& other) = default;
+
+    TLBExInfo (
+    Addr pc_,
+    uint32_t objSize_,
+    uint32_t offset_
+    ):
+    pc (pc_),
+    objSize (objSize_),
+    offset (offset_){
+    }
+
+    std::string dump() {
+        std::stringstream ss;
+        ss << std::hex << " inst: " <<  pc;
+        ss << std::dec << " Obj: " <<  objSize;
+        ss << std::dec << " Offset: " <<  offset;
+        return ss.str();
+    };
+};
+
+class ObjectInfo
+{
+public:
+    uint32_t objSize = 0;
+    Addr lastTouchedAddr = 0;
+    std::set<Addr> touchedUniqBlk;
+    uint32_t counter = 0;
+};
+
+#include <iostream>
+#include <list>
+#include <unordered_map>
+
+template <typename Key, typename Value>
+class LRUCache
+{
+public:
+    void put(const Key& key, const Value& value, bool& evict, Key& evictKey) {
+        evict = false;
+
+        auto it = cacheMap_.find(key);
+        if (it != cacheMap_.end()) {
+            // Key exists, update the value and move it to the front
+            it->second->second = value;
+            cacheItems_.splice(cacheItems_.begin(), cacheItems_, it->second);
+        } else {
+            // Key does not exist, insert new key-value pair
+            if (cacheItems_.size() == capacity) {
+                // Remove the least recently used item if the cache is full
+                auto last = cacheItems_.end();
+                --last;
+                evictKey = last->first;
+                evict = true;
+                cacheMap_.erase(last->first);
+                cacheItems_.pop_back();
+            }
+            cacheItems_.emplace_front(key, value);
+            cacheMap_[key] = cacheItems_.begin();
+        }
+    }
+
+public:
+    size_t capacity;
+private:
+    std::list<std::pair<Key, Value>> cacheItems_;
+    std::unordered_map<Key,
+typename std::list<std::pair<Key, Value>>::iterator> cacheMap_;
+};
 
 class LSQ
 {
   public:
     class LSQRequest;
 
+    // extend tlb with folloing information
+    std::map<Addr, TLBExInfo> tlbExtension;
+
+    uint32_t tlbExtensionSize = 0;
+
+    uint32_t avgCnter = 0;
+
+    std::set<Addr> ttlPages;
+
+
+
+    // map pc to write request
+    // pc, page address, offset
+    std::map<Addr, std::map<Addr, std::set<uint32_t> > > pcReqRecorder;
+
+    uint32_t pageReqRecorderSize = 0;
+
+    // page addr,           object size , offset
+    std::map<Addr, std::pair<Addr, Addr>>* pageObjectSizePtr;
+
+    std::list<Addr> pcAddrObjLRU;
+    std::set<Addr> pcAddrObjLRUCache;
+
+    std::map<Addr, ObjectInfo> pcAddrObjRecorder;
+
+    std::map<Addr, uint32_t>* pcObjRecorder;
+
+    gem5::memory::MemCtrl* memCtrlPtr = nullptr;
+
+    std::set<Addr> alignStrideWrInst;
+
+    // pc , object cnter
+    std::map<Addr, std::map<Addr, uint32_t>> unalignStrideWrInst;
+
+    // representative pc, Object
+    std::map<Addr, uint32_t> pcObjects;
+
+    std::map<uint32_t, uint64_t> objectSizeCnter;
+
+    // Object,representative pc
+    std::map<Addr, uint32_t> objectsPC;
+
+    // pc , counter
+    std::map<Addr, uint32_t> wrPCCnter;
+
+    uint64_t wrReqCnter = 0;
+    uint64_t wrReqTmpCnter = 0;
+
+    uint64_t repreWrReqCnter = 0;
+
+    std::set<Addr> objectSizeSet;
+
+    // pc, counter
+    LRUCache<Addr, Addr> simpleTLB;
     /**
      * DcachePort class for the load/store queue.
      */
@@ -741,6 +949,21 @@ class LSQ
     /** Same as above, but only for one thread. */
     void writebackStores(ThreadID tid);
 
+    void createPageCompObjOffset(LSQRequest* request, const DynInstPtr& inst);
+
+    void updatePageObject(LSQRequest* request, const DynInstPtr& inst);
+
+    void profileInst(LSQRequest* request, const DynInstPtr& inst);
+
+    void rmPCAddrObjLRU(Addr pcAddr);
+
+    void updatePCAddrObjLRU(Addr pcAddr, bool& evict, Addr& vicPCAddr);
+
+
+    void lookUpTLB(Addr addr);
+
+    void showObjectSize();
+
     /**
      * Squash instructions from a thread until the specified sequence number.
      */
@@ -754,6 +977,8 @@ class LSQ
      * specific thread.
      */
     bool violation(ThreadID tid);
+
+    void getMemCtrlPtr();
 
     /** Gets the instruction that caused the memory ordering violation. */
     DynInstPtr getMemDepViolator(ThreadID tid);
@@ -784,7 +1009,6 @@ class LSQ
     int numStores();
     /** Returns the total number of stores for a single thread. */
     int numStores(ThreadID tid);
-
 
     // hardware transactional memory
 
@@ -920,6 +1144,7 @@ class LSQ
     void cachePortBusy(bool is_load);
 
     RequestPort &getDataPort() { return dcachePort; }
+    void dumpInfo();
 
     void sendRetryResp();
 
@@ -988,6 +1213,16 @@ class LSQ
 
     /** Number of Threads. */
     ThreadID numThreads;
+
+    uint32_t wrOffEntryNum;
+
+    uint32_t tlbEntryNum;
+
+    uint32_t objConfThres;
+
+    uint32_t objIdenEntryNum;
+
+    bool isObjIdenRunTime;
 
     /** Enable load receive response throttling in the LSQ. */
     const bool recvRespThrottling;

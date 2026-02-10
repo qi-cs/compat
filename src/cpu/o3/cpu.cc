@@ -96,6 +96,10 @@ CPU::CPU(const BaseO3CPUParams &params)
       freeList(name() + ".freelist", &regFile),
 
       rob(this, params),
+      updatePageObjectEvent([this]{
+                scheduleLSQPageObjectEvent();},
+                "update PageObject Map",
+                false, Event::CPU_Tick_Pri),
 
       scoreboard(name() + ".scoreboard", regFile.totalNumPhysRegs()),
 
@@ -453,6 +457,8 @@ CPU::startup()
     iew.startupStage();
     rename.startupStage();
     commit.startupStage();
+
+    schedule(updatePageObjectEvent, clockEdge(Cycles(400000000)));
 }
 
 void
@@ -495,7 +501,10 @@ CPU::deactivateThread(ThreadID tid)
     fetch.deactivateThread(tid);
     commit.deactivateThread(tid);
 }
-
+void
+CPU::updatePageObjectMap()
+{
+}
 Counter
 CPU::totalInsts() const
 {
@@ -784,6 +793,15 @@ CPU::drain()
 
         drainSanityCheck();
         return DrainState::Drained;
+    }
+}
+
+void
+CPU::scheduleLSQPageObjectEvent()
+{
+    iew.ldstQueue.showObjectSize();
+    if (!updatePageObjectEvent.scheduled()) {
+        schedule(updatePageObjectEvent, clockEdge(Cycles(400000000)));
     }
 }
 
@@ -1501,6 +1519,10 @@ CPU::htmSendAbortSignal(ThreadID tid, uint64_t htm_uid,
     if (!iew.ldstQueue.getDataPort().sendTimingReq(abort_pkt)) {
         panic("HTM abort signal was not sent to the memory subsystem.");
     }
+}
+
+void
+CPU::showInfo(){
 }
 
 } // namespace o3

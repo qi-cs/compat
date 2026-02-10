@@ -144,6 +144,8 @@ class BaseCPU : public ClockedObject
     /** Is the CPU switched out or active? */
     bool _switchedOut;
 
+  public:
+    bool isStoreReqRecordEn;
     /** Cache the cache line size that we get from the system */
     const Addr _cacheLineSize;
 

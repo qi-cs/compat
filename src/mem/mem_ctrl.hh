@@ -54,14 +54,24 @@
 
 #include "base/callback.hh"
 #include "base/statistics.hh"
+#include "cpu/o3/cpu.hh"
 #include "enums/MemSched.hh"
 #include "mem/qos/mem_ctrl.hh"
 #include "mem/qport.hh"
 #include "params/MemCtrl.hh"
 #include "sim/eventq.hh"
+#include "sim/process.hh"
+#include "sim/simulate.hh"
 
 namespace gem5
 {
+
+GEM5_DEPRECATED_NAMESPACE(Compressor, compression);
+namespace compression
+{
+class Base;
+class BaseCompAlgorithm;
+}
 
 namespace memory
 {
@@ -292,7 +302,7 @@ class MemCtrl : public qos::MemCtrl
      */
     bool retryRdReq;
     bool retryWrReq;
-
+    std::set<uint64_t> tlbEvictPages;
     /**
      * Bunch of things requires to setup "events" in gem5
      * When event "respondEvent" occurs for example, the method
@@ -627,6 +637,62 @@ class MemCtrl : public qos::MemCtrl
      */
     std::unique_ptr<Packet> pendingDelete;
 
+    /** Compression method being used. */
+    compression::Base* compressor;
+
+    compression::BaseCompAlgorithm* compProcessor;
+    compression::Base* metacompressor;
+    uint32_t* dataPointerBestDiff = nullptr;
+
+    uint32_t* deltaPointerBestDiff = nullptr;
+
+    uint32_t* baseDataPointerBestDiff = nullptr;
+
+    uint8_t* dataPointerBestDiffBytePtr = nullptr;
+
+    uint8_t* deltaPointerBestDiffBytePtr = nullptr;
+
+    uint8_t* baseDataPointerBestDiffBytePtr = nullptr;
+
+    uint64_t  comp_granularity = 8;
+
+    uint64_t  comp_shift = 3;
+
+    uint64_t exceptBlkNum = 0;
+
+    bool isZeroed(void* ptr, size_t numBytes) {
+        // Cast the pointer to a byte pointer for easy iteration
+        unsigned char* bytePtr = static_cast<unsigned char*>(ptr);
+
+        // Iterate through each byte and check if it's zero
+        for (size_t i = 0; i < numBytes; ++i) {
+            if (bytePtr[i] != 0) {
+            return false; // Found a non-zero byte
+            }
+        }
+
+        return true; // All bytes are zero
+    }
+
+    uint32_t getCompressoLength(uint32_t length) {
+        if (length == 0)
+            return 0;
+        else if (length <= 8)
+            return 8;
+        else if (length <= 32)
+            return 32;
+        else
+            return 64;
+    }
+
+    uint32_t get8BlkSize(uint32_t length) {
+        if (length % 8 !=0)
+            return (length/8+1)*8;
+        else
+            return length;
+    }
+
+
     /**
      * Select either the read or write queue
      *
@@ -779,7 +845,19 @@ class MemCtrl : public qos::MemCtrl
     virtual void startup() override;
     virtual void drainResume() override;
 
-  protected:
+
+      // page addr,    object size , offset
+    std::map<Addr, std::pair<Addr, Addr>>* pageObjectSizePtr;
+
+    bool initCompDictFlip = false;
+
+    Process* process = nullptr;
+
+    gem5::o3::CPU* cpu;
+
+    void initCompressForWriteStatus();
+
+    bool translate(Addr virAddr, Addr& phyAddr);
 
     virtual Tick recvAtomic(PacketPtr pkt);
     virtual Tick recvAtomicBackdoor(PacketPtr pkt, MemBackdoorPtr &backdoor);
@@ -790,7 +868,68 @@ class MemCtrl : public qos::MemCtrl
 
     bool recvFunctionalLogic(PacketPtr pkt, MemInterface* mem_intr);
     Tick recvAtomicLogic(PacketPtr pkt, MemInterface* mem_intr);
+public:
+    void compressObject();
 
+    uint32_t compressObjectLine(uint8_t* dataPointer,uint32_t objectSize);
+
+    void computeCompPageSize(std::vector<uint32_t>& compLengthVec,
+                             uint32_t& lcpPageSize,
+                             uint32_t& compressoPageSize);
+
+    uint32_t compressWithBestDiff(Addr pageAddr, uint32_t objectSize,
+                                  uint32_t startOffset);
+
+    void showInfo();
+
+    std::string
+    printPageCompLength(uint8_t* data, uint32_t length = 64)
+    {
+        std::ostringstream d_str;
+        d_str << std::hex << std::setfill('0');
+
+        uint32_t j = 0;
+        for (unsigned i = 0; i < length; i++) {
+            d_str << std::setw(2) << (unsigned int) data[length-i-1];
+
+            j++;
+
+            if (j%8 ==0)
+                d_str << " ";
+
+        }
+
+        return d_str.str();
+    }
+    uint32_t getAlignedPageSize(uint32_t pageSize,
+                                uint32_t granularity = 256) {
+        uint32_t alignedSize = 0;
+        if (pageSize % granularity != 0) {
+            uint32_t num = pageSize/granularity;
+            alignedSize = (num+1)*granularity;
+        } else
+            alignedSize = pageSize;
+
+        if (alignedSize < 4096)
+            return alignedSize;
+
+        return 4096;
+    }
+
+    void getDeltaResult(void* basePointer,
+                        void* curPointer,
+                        void* rlsPointer,
+                        uint32_t objectSize) {
+        uint32_t* basePtr = (uint32_t*) basePointer;
+        uint32_t* curPtr = (uint32_t*) curPointer;
+        uint32_t* rlsPtr = (uint32_t*) rlsPointer;
+
+        for (uint32_t i = 0; i < objectSize/4; i++) {
+            rlsPtr[i] = curPtr[i] - basePtr[i];
+        }
+    }
+
+    void evictTLBPage(Addr virAddr);
 };
 
 } // namespace memory

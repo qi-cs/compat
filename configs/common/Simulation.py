@@ -528,6 +528,8 @@ def run(options, root, testsys, cpu_class):
             switch_cpus[i].clk_domain = testsys.cpu[i].clk_domain
             switch_cpus[i].progress_interval = testsys.cpu[i].progress_interval
             switch_cpus[i].isa = testsys.cpu[i].isa
+            switch_cpus[i].objConfThres = options.objConfThres
+            switch_cpus[i].objIdenEntryNum = options.objIdenEntryNum
             # simulation period
             if options.maxinsts:
                 switch_cpus[i].max_insts_any_thread = options.maxinsts
@@ -802,6 +804,8 @@ def run(options, root, testsys, cpu_class):
     else:
         if options.fast_forward:
             m5.stats.reset()
+        # exit_event = m5.simulate(1000)
+        # m5.checkpoint("/home/qshao/Project/IPDPS/checkpoint_template")
         print("**** REAL SIMULATION ****")
 
         # If checkpoints are being taken, then the checkpoint instruction

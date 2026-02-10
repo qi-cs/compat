@@ -51,12 +51,15 @@
 #include "cpu/o3/dyn_inst.hh"
 #include "cpu/o3/iew.hh"
 #include "cpu/o3/limits.hh"
+#include "debug/CommitLDST.hh"
 #include "debug/Drain.hh"
 #include "debug/Fetch.hh"
 #include "debug/HtmCpu.hh"
 #include "debug/LSQ.hh"
 #include "debug/Writeback.hh"
+#include "mem/mem_ctrl.hh"
 #include "params/BaseO3CPU.hh"
+#include "sim/sim_object.hh"
 
 namespace gem5
 {
@@ -123,6 +126,9 @@ LSQ::LSQ(CPU *cpu_ptr, IEW *iew_ptr, const BaseO3CPUParams &params)
                   params.smtLSQThreshold)),
       dcachePort(this, cpu_ptr),
       numThreads(params.numThreads),
+      objConfThres(params.objConfThres),
+      objIdenEntryNum(params.objIdenEntryNum),
+      isObjIdenRunTime(true),
       recvRespThrottling(params.recvRespThrottling),
       recvRespMaxCachelines(params.recvRespMaxCachelines),
       recvRespBufferSize(params.recvRespBufferSize),
@@ -164,6 +170,10 @@ LSQ::LSQ(CPU *cpu_ptr, IEW *iew_ptr, const BaseO3CPUParams &params)
         thread[tid].init(cpu, iew_ptr, params, this, tid);
         thread[tid].setDcachePort(&dcachePort);
     }
+
+    pageObjectSizePtr = new std::map<Addr, std::pair<Addr, Addr>>();
+
+    simpleTLB.capacity = 1024;
 }
 
 
@@ -326,6 +336,17 @@ LSQ::squash(const InstSeqNum &squashed_num, ThreadID tid)
 {
     thread.at(tid).squash(squashed_num);
 }
+void
+LSQ::getMemCtrlPtr() {
+    if (memCtrlPtr != nullptr)
+        return;
+
+    std::string memStr = "system.mem_ctrls";
+    SimObject* simObjectPtr = cpu->find(memStr.c_str());
+    if (simObjectPtr != nullptr) {
+        memCtrlPtr = dynamic_cast<gem5::memory::MemCtrl*>(simObjectPtr);
+    }
+}
 
 bool
 LSQ::violation()
@@ -434,6 +455,38 @@ LSQ::completeDataAccess(PacketPtr pkt)
     LSQRequest *request = dynamic_cast<LSQRequest*>(pkt->senderState);
     thread[cpu->contextToThread(request->contextId())]
         .completeDataAccess(pkt);
+}
+void
+LSQ::dumpInfo() {
+    if (pageObjectSizePtr->size()*10 < pageReqRecorderSize*12) {
+        return;
+    }
+
+    std::cout << "----------predict compress size-----------" << std::endl;
+
+    showObjectSize();
+
+    std::map<uint32_t, uint32_t> objSizeCnter;
+
+    for (auto iter : *pageObjectSizePtr) {
+        auto obj_off = iter.second;
+        std::cout << std::hex << "page: " << iter.first
+        << std::dec << " obj/off: "
+        << obj_off.first << " " << obj_off.second << std::endl;
+
+        if (objSizeCnter.count(obj_off.first) == 0)
+            objSizeCnter[obj_off.first] = 1;
+        else
+            objSizeCnter[obj_off.first] ++;
+    }
+
+    std::cout << "Percent of each object................" << std::endl;
+
+    for (auto iter : objSizeCnter) {
+        double percent = double(iter.second) / pageObjectSizePtr->size();
+
+        std::cout << "obj: " << iter.first << " " <<  percent << std::endl;
+    }
 }
 
 void
@@ -815,11 +868,20 @@ LSQ::pushRequest(const DynInstPtr& inst, bool isLoad, uint8_t *data,
             if (cpu->checker) {
                 inst->reqToVerify = std::make_shared<Request>(*request->req());
             }
+
+            Addr virPageAddr    = request->getVaddr() & ~0xFFF;
+            lookUpTLB(virPageAddr);
+
+            // profile instruction
+            profileInst(request,inst);
+            updatePageObject(request, inst);
+
             Fault fault;
             if (isLoad)
                 fault = read(request, inst->lqIdx);
-            else
+            else {
                 fault = write(request, data, inst->sqIdx);
+            }
             // inst->getFault() may have the first-fault of a
             // multi-access split request at this point.
             // Overwrite that only if we got another type of fault
@@ -838,6 +900,191 @@ LSQ::pushRequest(const DynInstPtr& inst, bool isLoad, uint8_t *data,
         inst->traceData->setMem(addr, size, flags);
 
     return inst->getFault();
+}
+
+void
+LSQ::lookUpTLB(Addr addr) {
+    bool evict = false;
+    Addr evictAddr = 0;
+
+    simpleTLB.put(addr,addr,evict, evictAddr);
+
+    if (evict) {
+        getMemCtrlPtr();
+        if (memCtrlPtr != nullptr)
+            memCtrlPtr->evictTLBPage(evictAddr);
+    }
+}
+
+void
+LSQ::updatePageObject(LSQRequest* request, const DynInstPtr& inst) {
+    Addr virPageAddr    = request->getVaddr() & ~0xFFF;
+    Addr instAddr       = inst->getInstAddr();
+    Addr offset         = request->getVaddr() & 0xFFF;
+
+    auto& pageObjectSize = *(pageObjectSizePtr);
+
+    if (pcObjects.count(instAddr) == 0) {
+        if (pageObjectSize.count(virPageAddr) == 0) {
+            std::pair<Addr, Addr> objOffset = std::make_pair(64, 0);
+            pageObjectSize[virPageAddr] = objOffset;
+        }
+
+    } else {
+        // if pageObjectSize is already identified and
+        // and the identified object size is the same
+        // identified by this instruction, skip update
+        if (pageObjectSize.count(virPageAddr) != 0 &&
+            pageObjectSize[virPageAddr].first != 64) {
+            uint32_t updateObjectSize = pcObjects[instAddr];
+            uint32_t preObjectSize = pageObjectSize[virPageAddr].first;
+            if (updateObjectSize == preObjectSize) {
+                return;
+            }
+            // we dont want to update with a less common object size
+            if (objectSizeCnter.count(updateObjectSize) != 0 &&
+                objectSizeCnter[updateObjectSize] < preObjectSize) {
+                return;
+            }
+        }
+
+        uint32_t objSize = pcObjects[instAddr];
+        std::pair<Addr, Addr> objOffset = std::make_pair(objSize, offset);
+        pageObjectSize[virPageAddr] = objOffset;
+    }
+}
+
+void
+LSQ::profileInst(LSQRequest* request, const DynInstPtr& inst) {
+    Addr virPageAddr    = request->getVaddr() & (~0xFFF);
+    Addr instAddr       = inst->getInstAddr();
+
+    Addr pcAddr = (instAddr << 30 | virPageAddr >> 12);
+
+    // If the object size for this instruction has been identified,
+    //no need to profile it anymore
+    if (pcObjects.count(instAddr) != 0) {
+        return;
+    }
+
+    bool evict = false;
+    Addr vicPCAddr = 0;
+
+    updatePCAddrObjLRU(pcAddr, evict, vicPCAddr);
+    if (evict) {
+        pcAddrObjRecorder.erase(vicPCAddr);
+    }
+
+    if (pcAddrObjRecorder.count(pcAddr) != 0) {
+        auto& objectInfo = pcAddrObjRecorder[pcAddr];
+
+        Addr lastTouchedAddr = objectInfo.lastTouchedAddr;
+        objectInfo.lastTouchedAddr = request->getVaddr();
+
+        uint32_t newObjSize = request->getVaddr() > lastTouchedAddr ?
+                              (request->getVaddr() - lastTouchedAddr) :
+                              (lastTouchedAddr - request->getVaddr());
+
+        // If aligned with cache line, no need to identify object size
+        if (newObjSize % 64 == 0 ||64 % newObjSize == 0) {
+            return;
+        }
+
+        // skip the object size that is smaller than 32 or larger than 256,
+        if (newObjSize < 32 || newObjSize >  256)
+            return;
+
+        while (newObjSize < 64) {
+            newObjSize = newObjSize << 1;
+        }
+
+        while (newObjSize > 128) {
+            newObjSize= newObjSize >> 1;
+        }
+
+        if (newObjSize % 8 != 0)
+            return;
+
+        if (objectInfo.objSize == 0 || objectInfo.objSize == 64) {
+            objectInfo.counter++;
+            objectInfo.objSize = newObjSize;
+        } else if (newObjSize == objectInfo.objSize) {
+            objectInfo.counter++;
+        }
+
+        if (objectInfo.counter > objConfThres) {
+            pcObjects[instAddr] = objectInfo.objSize;
+            if (objectSizeCnter.count(objectInfo.objSize) == 0)
+                objectSizeCnter[objectInfo.objSize] = 1;
+            else
+                objectSizeCnter[objectInfo.objSize] ++;
+        }
+    } else {
+        ObjectInfo objInfo;
+        objInfo.lastTouchedAddr = request->getVaddr();
+        objInfo.counter++;
+        pcAddrObjRecorder[pcAddr] = objInfo;
+    }
+}
+
+void
+LSQ::updatePCAddrObjLRU(Addr pcAddr, bool& evict, Addr& vicPCAddr) {
+    auto it = pcAddrObjLRUCache.find(pcAddr);
+
+    // If key exists, update its position and value
+    if (it != pcAddrObjLRUCache.end()) {
+        // update LRU
+        pcAddrObjLRU.remove(pcAddr);
+        pcAddrObjLRU.push_front(pcAddr);
+        return;
+    }
+
+    // If cache is full, remove least recently used item
+    if (pcAddrObjLRUCache.size() >= objIdenEntryNum) {
+        // Get the least recently used key
+        vicPCAddr = pcAddrObjLRU.back();
+
+        // Remove from both list and map
+        pcAddrObjLRU.remove(vicPCAddr);
+        pcAddrObjLRUCache.erase(vicPCAddr);
+
+        evict = true;
+    }
+
+    // Add new key-value pair
+    pcAddrObjLRU.push_front(pcAddr);
+    pcAddrObjLRUCache.insert(pcAddr);
+
+}
+
+void
+LSQ::rmPCAddrObjLRU(Addr pcAddr){
+    pcAddrObjLRU.remove(pcAddr);
+    pcAddrObjLRUCache.erase(pcAddr);
+}
+
+void
+LSQ::showObjectSize() {
+    for (auto& iter:pcObjects) {
+        Addr instAddr = iter.first;
+        auto& object = iter.second;
+        std::cout << std::hex << "pc: " << instAddr << std::dec;
+        std::cout << " object " << object  <<  " cnt " <<
+        wrPCCnter[instAddr] << std::endl;
+    }
+
+    if (pageObjectSizePtr->empty())
+        return;
+
+    std::cout << "---addr----pc----------offset-----filtered----" << std::endl;
+
+    for (auto& iter : (*pageObjectSizePtr)) {
+        Addr pageAddr = iter.first;
+        auto& objOffset = iter.second;
+        std::cout << "pageAddr: " << std::hex <<
+        pageAddr << " obj " << std::dec <<
+        objOffset.first << " offset " << objOffset.second << std::endl;
+    }
 }
 
 void

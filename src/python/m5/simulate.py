@@ -56,6 +56,7 @@ from _m5 import event as _m5_event
 from _m5.stats import updateEvents as updateStatEvents
 
 from . import (
+    objects,
     params,
     stats,
     ticks,
@@ -275,6 +276,7 @@ def simulate(*args, **kwargs):
     sys.stdout.flush()
     sys.stderr.flush()
     sim_out = _m5_event.simulate(*args, **kwargs)
+    showInfo()
     sys.stdout.flush()
     sys.stderr.flush()
 
@@ -391,6 +393,12 @@ def drain():
 def memWriteback(root):
     for obj in root.descendants():
         obj.memWriteback()
+
+
+def showInfo():
+    root = Root.getInstance()
+    for obj in root.descendants():
+        obj.showInfo()
 
 
 def memInvalidate(root):

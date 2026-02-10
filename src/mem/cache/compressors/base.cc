@@ -47,7 +47,7 @@
 
 namespace gem5
 {
-
+GEM5_DEPRECATED_NAMESPACE(Compressor, compression);
 namespace compression
 {
 
@@ -102,9 +102,15 @@ Base::Base(const Params &p)
 
     fatal_if(blkSize < sizeThreshold, "Compressed data must fit in a block");
 }
+void
+Base::updateBlockSize(uint32_t blkSize_)
+{
+    blkSize = blkSize_;
+    sizeThreshold = (blkSize_*99)/100;
+}
 
 void
-Base::setCache(BaseCache *_cache)
+Base::setCache(ClockedObject *_cache)
 {
     assert(!cache);
     cache = _cache;
@@ -255,11 +261,12 @@ Base::BaseStats::regStats()
     statistics::Group::regStats();
 
     // Values comprised are {0, 1, 2, 4, ..., blkSize}
-    compressionSize.init(std::log2(compressor.blkSize*8) + 2);
+    //compressionSize.init(std::log2(compressor.blkSize*8) + 2);
+    compressionSize.init(std::log2(1024*8) + 2);
     compressionSize.subname(0, "0");
     compressionSize.subdesc(0,
         "Number of blocks that compressed to fit in 0 bits");
-    for (unsigned i = 0; i <= std::log2(compressor.blkSize*8); ++i) {
+    for (unsigned i = 0; i <= std::log2(512*8); ++i) {
         std::string str_i = std::to_string(1 << i);
         compressionSize.subname(1+i, str_i);
         compressionSize.subdesc(1+i,

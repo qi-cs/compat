@@ -145,6 +145,7 @@ class CPU : public BaseCPU
             tickEvent.squash();
     }
 
+    void scheduleLSQPageObjectEvent();
     /**
      * Check if the pipeline has drained and signal drain done.
      *
@@ -447,6 +448,8 @@ class CPU : public BaseCPU
     /** The re-order buffer. */
     ROB rob;
 
+    EventFunctionWrapper updatePageObjectEvent;
+
     /** Active Threads List */
     std::list<ThreadID> activeThreads;
 
@@ -600,7 +603,13 @@ class CPU : public BaseCPU
     {
         return iew.ldstQueue.getDataPort();
     }
+    std::map<Addr, std::pair<Addr, Addr>>*
+    getPageObjectOffset()
+    {
+        return iew.ldstQueue.pageObjectSizePtr;
+    }
 
+    void updatePageObjectMap();
     struct CPUStats : public statistics::Group
     {
         CPUStats(CPU *cpu);
@@ -618,6 +627,13 @@ class CPU : public BaseCPU
     // hardware transactional memory
     void htmSendAbortSignal(ThreadID tid, uint64_t htm_uid,
                             HtmFailureFaultCause cause) override;
+
+
+  public:
+  //        pc                pageAddr counter
+  std::map<uint64_t, std::map<Addr, uint32_t>> pcStoreRecorder;
+
+  void showInfo();
 };
 
 } // namespace o3

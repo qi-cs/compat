@@ -64,6 +64,7 @@ class EventManager;
 class ProbeManager;
 class SimObjectResolver;
 
+void dumpInfo();
 /**
  * Abstract superclass for simulation objects.  Represents things that
  * correspond to physical components and can be specified via the
@@ -146,6 +147,7 @@ class SimObjectResolver;
 class SimObject : public EventManager, public Serializable, public Drainable,
                   public statistics::Group, public Named
 {
+  friend void dumpInfo();
   private:
     typedef std::vector<SimObject *> SimObjectList;
 
@@ -285,6 +287,9 @@ class SimObject : public EventManager, public Serializable, public Drainable,
      */
     DrainState drain() override { return DrainState::Drained; }
 
+    virtual void dumpState(std::stringstream& ss) {};
+
+    virtual void showInfo() {};
     /**
      * Write back dirty buffers to memory using functional writes.
      *

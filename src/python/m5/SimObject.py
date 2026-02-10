@@ -641,6 +641,7 @@ class SimObject(metaclass=MetaSimObject):
         PyBindMethod("initState"),
         PyBindMethod("memInvalidate"),
         PyBindMethod("memWriteback"),
+        PyBindMethod("showInfo"),
         PyBindMethod("regProbePoints"),
         PyBindMethod("regProbeListeners"),
         PyBindMethod("startup"),

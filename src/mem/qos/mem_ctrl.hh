@@ -368,6 +368,8 @@ class MemCtrl : public ClockedObject
     /** read the system pointer
      * @return pointer to the system object */
     System* system() const { return _system; }
+
+    uint8_t* getSystemMem() const { return _system->memPtr; }
 };
 
 template<typename Queues>

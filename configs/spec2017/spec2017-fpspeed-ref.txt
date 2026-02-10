@@ -1,0 +1,18 @@
+# 603.bwaves_s ref
+bwaves_s_base.rv64g-gcc-9-64 bwaves_1 < bwaves_1.in > bwaves_1.out 2>> bwaves_1.err
+bwaves_s_base.rv64g-gcc-9-64 bwaves_2 < bwaves_2.in > bwaves_2.out 2>> bwaves_2.err
+
+# 607.cactuBSSN_s ref
+cactuBSSN_s_base.rv64g-gcc-9-64 spec_ref.par   > spec_ref.out 2>> spec_ref.err
+
+# 619.lbm_s ref
+lbm_s_base.rv64g-gcc-9-64 3000 reference.dat 0 0  200_200_260_ldc.of > lbm.out 2>> lbm.err
+
+# 621.wrf_s ref
+wrf_s_base.rv64g-gcc-9-64 > rsl.out.0000 2>> wrf.err
+
+# 638.imagick_s ref
+imagick_s_base.rv64g-gcc-9-64 -limit disk 0 refspeed_input.tga -resize 817% -rotate -2.76 -shave 540x375 -alpha remove -auto-level -contrast-stretch 1x1% -colorspace Lab -channel R -equalize +channel -colorspace sRGB -define histogram:unique-colors=false -adaptiveblur 0x5 -despeckle -auto-gamma -adaptive-sharpen 55 -enhance -brightness-contrast10x10 -resize 30% refspeed_output.tga > refspeed_convert.out 2>> refspeed_convert.err
+
+# 649.fotonik3d_s ref
+fotonik3d_s_base.rv64g-gcc-9-64 > fotonik3d_r.log 2>> fotonik3d_r.err

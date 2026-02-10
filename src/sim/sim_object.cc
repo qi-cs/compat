@@ -33,6 +33,7 @@
 
 #include "base/logging.hh"
 #include "base/match.hh"
+#include "base/output.hh"
 #include "base/trace.hh"
 #include "debug/Checkpoint.hh"
 #include "sim/probe/probe.hh"
@@ -145,6 +146,32 @@ SimObject::serializeAll(const std::string &cpt_dir)
    }
 }
 
+void
+dumpInfo()
+{
+    std::ostream *debugStream = simout.find("dumpDebugState.txt")->stream();
+    if (debugStream != nullptr) {
+        simout.remove("dumpDebugState.txt");
+    }
+
+    debugStream = simout.findOrCreate("dumpDebugState.txt")->stream();
+
+    std::stringstream ss;
+    ss << "---------------DUMP INFO------------------" << std::endl;
+    SimObject::SimObjectList::reverse_iterator ri =
+                                SimObject::simObjectList.rbegin();
+    SimObject::SimObjectList::reverse_iterator rend =
+                                SimObject::simObjectList.rend();
+
+    for (; ri != rend; ++ri) {
+        SimObject *obj = *ri;
+        // This works despite name() returning a fully qualified name
+        // since we are at the top level.
+        obj->dumpState(ss);
+   }
+
+   *debugStream << ss.rdbuf() << std::endl;
+}
 SimObject *
 SimObject::find(const char *name)
 {

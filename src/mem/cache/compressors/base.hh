@@ -48,8 +48,9 @@ namespace gem5
 
 class BaseCache;
 class CacheBlk;
+class ClockedObject;
 struct BaseCacheCompressorParams;
-
+GEM5_DEPRECATED_NAMESPACE(Compressor, compression);
 namespace compression
 {
 
@@ -90,7 +91,7 @@ class Base : public SimObject
     /**
      * Uncompressed cache line size (in bytes).
      */
-    const std::size_t blkSize;
+    std::size_t blkSize;
 
     /** Chunk size, in number of bits. */
     const unsigned chunkSizeBits;
@@ -99,7 +100,7 @@ class Base : public SimObject
      * Size in bytes at which a compression is classified as bad and therefore
      * the compressed block is restored to its uncompressed format.
      */
-    const std::size_t sizeThreshold;
+    std::size_t sizeThreshold;
 
     /**
      * Degree of parallelization of the compression process. It is the
@@ -126,7 +127,7 @@ class Base : public SimObject
     const Cycles decompExtraLatency;
 
     /** Pointer to the parent cache. */
-    BaseCache* cache;
+    ClockedObject* cache;
 
     struct BaseStats : public statistics::Group
     {
@@ -154,7 +155,7 @@ class Base : public SimObject
         /** Number of decompressions performed. */
         statistics::Scalar decompressions;
     } stats;
-
+  public:
     /**
      * This function splits the raw data into chunks, so that it can be
      * parsed by the compressor.
@@ -203,8 +204,9 @@ class Base : public SimObject
     virtual ~Base() = default;
 
     /** The cache can only be set once. */
-    virtual void setCache(BaseCache *_cache);
+    virtual void setCache(ClockedObject *_cache);
 
+    virtual void updateBlockSize(uint32_t blkSize_);
     /**
      * Apply the compression process to the cache line. Ignores compression
      * cycles.

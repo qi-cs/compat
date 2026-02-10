@@ -78,7 +78,7 @@ Multi::~Multi()
 }
 
 void
-Multi::setCache(BaseCache *_cache)
+Multi::setCache(ClockedObject *_cache)
 {
     Base::setCache(_cache);
     for (auto& compressor : compressors) {

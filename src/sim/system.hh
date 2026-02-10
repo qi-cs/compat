@@ -425,6 +425,8 @@ class System : public SimObject, public PCEventScope
 
     ThermalModel * thermalModel;
 
+public:
+    uint8_t* memPtr = nullptr;
   protected:
     /**
      * Strips off the system name from a requestor name

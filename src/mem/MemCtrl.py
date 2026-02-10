@@ -101,6 +101,9 @@ class MemCtrl(QoSMemCtrl):
 
     command_window = Param.Latency("10ns", "Static backend latency")
     disable_sanity_check = Param.Bool(False, "Disable port resp Q size check")
+    compressor = Param.BaseCacheCompressor(NULL, "Cache compressor.")
+
+    metacompressor = Param.BaseCacheCompressor(NULL, "Cache Meta Compressor.")
 
 
 add_citation(

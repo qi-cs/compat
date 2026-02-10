@@ -241,6 +241,44 @@ def addNoISAOptions(parser):
     )
 
 
+def addSpec2006Options(parser):
+    parser.add_argument(
+        "--benchmark-stdout",
+        type=str,
+        default="",
+        help="Absolute path for stdout redirection for the benchmark.",
+    )
+    parser.add_argument(
+        "--benchmark-stderr",
+        type=str,
+        default="",
+        help="Absolute path for stderr redirection for the benchmark.",
+    )
+    parser.add_argument(
+        "--spec-2006-bench",
+        action="store_true",
+        help="use spec 2006 benchmarks as workloads",
+    )
+    parser.add_argument(
+        "--spec-2017-bench",
+        action="store_true",
+        help="use spec 2017 benchmarks as workloads",
+    )
+    parser.add_argument(
+        "--spec-size",
+        action="store",
+        choices=["ref", "train", "test"],
+        help="spec input size for 2017",
+    )
+    parser.add_argument(
+        "--spec-mode",
+        action="store",
+        choices=["rate", "speed"],
+        default="rate",
+        help="spec rate or speed",
+    )
+
+
 # Add common options that assume a non-NULL ISA.
 
 
@@ -377,6 +415,168 @@ def addCommonOptions(parser, default_isa: Optional[ISA] = None):
                       Elastic Trace probe in a capture simulation and
                       Trace CPU in a replay simulation""",
         default="",
+    )
+
+    parser.add_argument(
+        "--isStoreReqRecordEn",
+        action="store_true",
+        help="store request record for each one",
+    )
+
+    parser.add_argument(
+        "--chunk_size_bits",
+        type=int,
+        default=32,
+        help="chunk size bits 8 16 32 64",
+    )
+
+    parser.add_argument(
+        "--compressor",
+        type=str,
+        default="CPack",
+        choices=[
+            "Base64Delta8",
+            "Base64Delta16",
+            "Base64Delta32",
+            "Base32Delta8",
+            "Base32Delta16",
+            "Base16Delta8",
+            "CPack",
+            "FPC",
+            "FPCD",
+            "FrequentValuesCompressor",
+            "RepeatedQwordsCompressor",
+            "ZeroCompressor",
+            "PerfectCompressor",
+            "BDI",
+        ],
+        help="compressor",
+    )
+
+    parser.add_argument(
+        "--metacompressor",
+        type=str,
+        default="CPack",
+        choices=[
+            "Base64Delta8",
+            "Base64Delta16",
+            "Base64Delta32",
+            "Base32Delta8",
+            "Base32Delta16",
+            "Base16Delta8",
+            "CPack",
+            "FPC",
+            "FPCD",
+            "FrequentValuesCompressor",
+            "RepeatedQwordsCompressor",
+            "ZeroCompressor",
+            "PerfectCompressor",
+            "BDI",
+        ],
+        help="metacompressor",
+    )
+
+    parser.add_argument(
+        "--compPktLength",
+        type=int,
+        default=64,
+        help="compress pkt length 64 or 128 or 256",
+    )
+
+    parser.add_argument(
+        "--meta_chunk_size_bits",
+        type=int,
+        default=32,
+        help="meta chunk size bits 32 64 128 256 512",
+    )
+
+    parser.add_argument(
+        "--compareLCPPat",
+        action="store_true",
+        help="combine lcp and pattern compression",
+    )
+    parser.add_argument(
+        "--comp_granularity",
+        type=int,
+        default=8,
+        help="compress granularity bit",
+    )
+
+    parser.add_argument(
+        "--pageSizeAligned",
+        type=int,
+        default=256,
+        help="align page size to 256",
+    )
+
+    parser.add_argument(
+        "--enAdaptiveWriteBackComp",
+        action="store_true",
+        help="collect write back stable information",
+    )
+
+    parser.add_argument(
+        "--pattern32CacheSize",
+        type=int,
+        default=256,
+        help="size of 4 metadata cache",
+    )
+
+    parser.add_argument(
+        "--pattern64CacheSize",
+        type=int,
+        default=1024,
+        help="size of 8 metadata cache",
+    )
+
+    parser.add_argument(
+        "--patterNumThreshold",
+        type=int,
+        default=8,
+        help="pattern number per page",
+    )
+
+    parser.add_argument(
+        "--mergeThreshold", type=int, default=1, help="merge threshold"
+    )
+
+    parser.add_argument(
+        "--collectWrStats", action="store_true", help="collect write status"
+    )
+
+    parser.add_argument(
+        "--recordAddr",
+        action="store",
+        type=int,
+        default=0,
+        help="recordAddr for lsq unit",
+    )
+
+    parser.add_argument(
+        "--collectWrTrace",
+        action="store_true",
+        help="collect write page address for each pc",
+    )
+
+    parser.add_argument(
+        "--tlbEntryNum",
+        type=int,
+        default=1024,
+        help="number of entries in tlb",
+    )
+
+    parser.add_argument(
+        "--objConfThres",
+        type=int,
+        default=2,
+        help="number of blocks accessed to compress at obj level",
+    )
+
+    parser.add_argument(
+        "--objIdenEntryNum",
+        type=int,
+        default=128,
+        help="number of identifier entry number",
     )
 
     # dist-gem5 options
@@ -664,6 +864,17 @@ def addCommonOptions(parser, default_isa: Optional[ISA] = None):
         choices=["ref", "test", "train", "smred", "mdred", "lgred"],
         help="Input set size for SPEC CPU2000 benchmarks.",
     )
+
+    parser.add_argument(
+        "-b",
+        "--benchmark",
+        action="store",
+        type=str,
+        dest="benchmark",
+        help="Specify the benchmark to run. Available benchmarks: %s"
+        % DefinedBenchmarks,
+    )
+
     parser.add_argument(
         "--arm-iset",
         default="arm",
