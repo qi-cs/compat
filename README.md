@@ -1,3 +1,47 @@
+# compat
+compat is based on gem5 simulator.
+
+It works in SE mode of gem5 and is based on checkpoints.
+
+For the benchmark, we support spec2017.
+
+Due to the copyrights of spec2017, spec2017 benchmark will not be presented in compat simulator.
+
+To run compat with spec2017 benchmark, compile spec2017 benchmark with arm architecture.
+
+Here we take mcf in spec2017 for example, the directory should follow the structure:
+
+```text
+compat/
+├── ...(default folders from gem5)
+├── checkpoint
+│   └── mcf
+│       └──cpt.93300000000000
+└── spec2017_workload
+    └── 505.mcf_r
+```
+
+And initialize the environment path:
+export cpu_2017_dir="path to spec2017_workload"
+
+To run compat with mcf:
+```bash
+build/ARM/gem5.fast configs/spec2017/se_spec17.py \
+--spec-2017-bench -b mcf --spec-mode=rate --spec-size=ref \
+--maxinst=100000000 --arch=ARM --cpu-type=ArmO3CPU --sys-clock=1.6GHz  \
+--cpu-clock=3.5GHz --mem-size=2GB --mem-type=DDR4_2400_4x16 --caches  \
+--checkpoint-dir ./checkpoint/mcf  -r 1
+```
+
+In the end of simulation, it will generate the compression ratio.
+
+Here is just an example:
+
+```bash
+lcp vs compresso vs bestbase: 1.974/1.987/2.966
+Exiting @ tick 63326087576466 because a thread reached the max instruction count
+```
+
 # The gem5 Simulator
 
 This is the repository for the gem5 simulator. It contains the full source code
