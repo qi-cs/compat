@@ -458,24 +458,23 @@ MemCtrl::printQs() const
 }
 
 uint32_t
-MemCtrl::compressObjectLine(uint8_t* dataPointer,uint32_t objectSize) {
+MemCtrl::compressObjectLine(uint8_t *dataPointer, uint32_t objectSize)
+{
     uint32_t compLength = 0;
-    if (!isZeroed(dataPointer,objectSize)) {
-        compLength  = compProcessor->getDataCompressLength(dataPointer);
-        // convert to byte
-        compLength = compLength >> 3;
+
+    if (!isZeroed(dataPointer, objectSize)) {
+        // Compressor returns a bit-length. Convert to bytes first.
+        compLength = compProcessor->getDataCompressLength(dataPointer) >> 3;
     }
 
-    if (compLength % comp_granularity != 0) {
-        // further convert to 8 byte
-        compLength = compLength >> comp_shift;
-        compLength = compLength+1;
-    } else {
-        // further convert to 8 byte
-        compLength = compLength >> comp_shift;
+    // Convert bytes to compression "blocks" of size (1 << comp_shift),
+    // rounding up when there is a partial block.
+    const uint32_t blockSize = 1u << comp_shift;
+    if (compLength == 0) {
+        return 0;
     }
 
-    return compLength;
+    return (compLength + blockSize - 1) >> comp_shift;
 }
 
 void
@@ -490,50 +489,49 @@ MemCtrl::computeCompPageSize(std::vector<uint32_t>& compLengthVec,
 
     uint32_t except8 = 0;
     uint32_t except32 = 0;
-
     uint32_t zeroBlks = 0;
 
-    for (auto& iter:compLengthVec) {
-        iter = getCompressoLength(iter);
+    for (auto &len : compLengthVec) {
+        len = getCompressoLength(len);
 
-        compressoPageSize+= iter;
+        compressoPageSize += len;
 
-        if (iter == 0)
+        if (len == 0)
             zeroBlks++;
 
-        if (iter <= 8) {
+        if (len <= 8) {
             lcp8 += 8;
-            lcp32+= 32;
-        } else if (iter <= 32) {
+            lcp32 += 32;
+        } else if (len <= 32) {
             lcp8 += 64;
-            lcp32+= 32;
+            lcp32 += 32;
 
             except8++;
         } else {
             lcp8 += 64;
-            lcp32+= 64;
+            lcp32 += 64;
 
             except32++;
         }
 
-        lcp64+=64;
+        lcp64 += 64;
     }
 
     uint32_t lcp0 = (64 - zeroBlks) * 64;
 
-    lcp8 += (except8*8);
-    lcp32 += (except32*32);
+    lcp8 += (except8 * 8);
+    lcp32 += (except32 * 32);
 
     lcpPageSize = std::min(lcp8, lcp32);
     lcpPageSize = std::min(lcpPageSize, lcp64);
     lcpPageSize = std::min(lcpPageSize, lcp0);
 
     if (lcpPageSize == lcp0) {
-        exceptBlkNum+=(64-zeroBlks);
+        exceptBlkNum += (64 - zeroBlks);
     } else if (lcpPageSize == lcp8) {
-        exceptBlkNum+=except8;
+        exceptBlkNum += except8;
     } else if (lcpPageSize == lcp32) {
-        exceptBlkNum+=except32;
+        exceptBlkNum += except32;
     }
 }
 
@@ -544,98 +542,50 @@ MemCtrl::compressWithBestDiff(Addr pageAddr,
     uint32_t compDiffPageSize = 0;
 
     if (startOffset != 0) {
-        compDiffPageSize+= startOffset;
+        compDiffPageSize += startOffset;
     }
 
-    // 1024 Byte
+    // Clear scratch buffers (1024 bytes).
     std::memset(dataPointerBestDiff, 0, 1024);
-
     std::memset(deltaPointerBestDiff, 0, 1024);
-
     std::memset(baseDataPointerBestDiff, 0, 1024);
 
-    std::vector<std::map<uint8_t, uint32_t> > bestBaseObject;
-    bestBaseObject.resize(objectSize);
+    auto *memPtr = getSystemMem();
 
-    uint8_t* memPtr = getSystemMem();
-
-    bool useByte = true;
-
-    if (useByte) {
-        for (Addr tmpAddr = pageAddr + startOffset;
-             tmpAddr < (pageAddr + 4096); tmpAddr += objectSize) {
-            for (uint32_t wordCount = 0; wordCount < objectSize; wordCount++) {
-                uint8_t* memPointer = memPtr + tmpAddr + wordCount;
-                auto& tmpMap = bestBaseObject[wordCount];
-                if (tmpMap.count(*memPointer) == 0) {
-                    tmpMap[*memPointer] = 1;
-                } else {
-                    tmpMap[*memPointer]++;
-                }
-            }
-        }
-
-        uint32_t objectNumber = 4096 / objectSize;
-
-        for (uint32_t wordCount = 0; wordCount < objectSize; wordCount++) {
-            auto& tmpMap = bestBaseObject[wordCount];
-            uint8_t data = 0;
-            uint32_t counter = 0;
-
-            for (auto& iter : tmpMap) {
-                if (iter.second > counter) {
-                    counter = iter.second;
-                    data = iter.first;
-                }
-            }
-
-            if (counter < (objectNumber * 0.4))
-                data = 0;
-
-            baseDataPointerBestDiffBytePtr[wordCount] = data;
-        }
-    } else {
-        std::vector<std::map<uint32_t, uint32_t> > bestBaseObject;
-        bestBaseObject.resize(objectSize / 4);
-
-        uint8_t* memPtr = getSystemMem();
+    // Build a "best base" line by picking, for each byte position, the value
+    // that appears most often across all objects on the page. If that value
+    // is not common enough, fall back to zero.
+    {
+        std::vector<std::map<uint8_t, uint32_t>> bestBaseObject(objectSize);
 
         for (Addr tmpAddr = pageAddr + startOffset;
              tmpAddr < (pageAddr + 4096); tmpAddr += objectSize) {
-            for (uint32_t wordCount = 0; wordCount < objectSize / 4;
-                 wordCount++) {
-                uint8_t* memPointer = memPtr + tmpAddr + wordCount * 4;
-
-                uint32_t* wordPointer =
-                    reinterpret_cast<uint32_t*>(memPointer);
-
-                auto& tmpMap = bestBaseObject[wordCount];
-                if (tmpMap.count(*wordPointer) == 0) {
-                    tmpMap[*wordPointer] = 1;
-                } else {
-                    tmpMap[*wordPointer]++;
-                }
+            for (uint32_t byteIdx = 0; byteIdx < objectSize; ++byteIdx) {
+                uint8_t *memPointer = memPtr + tmpAddr + byteIdx;
+                auto &histogram = bestBaseObject[byteIdx];
+                ++histogram[*memPointer];
             }
         }
 
-        uint32_t objectNumber = 4096 / objectSize;
+        const uint32_t objectCount = 4096 / objectSize;
 
-        for (uint32_t wordCount = 0; wordCount < objectSize / 4; wordCount++) {
-            auto& tmpMap = bestBaseObject[wordCount];
-            uint32_t data = 0;
-            uint32_t counter = 0;
+        for (uint32_t byteIdx = 0; byteIdx < objectSize; ++byteIdx) {
+            auto &histogram = bestBaseObject[byteIdx];
+            uint8_t bestValue = 0;
+            uint32_t bestCount = 0;
 
-            for (auto& iter : tmpMap) {
-                if (iter.second > counter) {
-                    counter = iter.second;
-                    data = iter.first;
+            for (const auto &entry : histogram) {
+                if (entry.second > bestCount) {
+                    bestCount = entry.second;
+                    bestValue = entry.first;
                 }
             }
 
-            if (counter < (objectNumber * 0.4))
-                data = 0;
+            if (bestCount < static_cast<uint32_t>(objectCount * 0.4)) {
+                bestValue = 0;
+            }
 
-            baseDataPointerBestDiff[wordCount] = data;
+            baseDataPointerBestDiffBytePtr[byteIdx] = bestValue;
         }
     }
 
@@ -643,16 +593,16 @@ MemCtrl::compressWithBestDiff(Addr pageAddr,
         compressObjectLine(baseDataPointerBestDiffBytePtr, objectSize);
     compDiffPageSize += (compObjLength << comp_shift);
 
+    /*
     std::cout << std::hex << pageAddr << " "
               << " bestbase : "
               << printPageCompLength(baseDataPointerBestDiffBytePtr,
                                      objectSize)
-              << std::endl;
-
+                << std::endl;
+    */
     for (Addr tmpAddr = pageAddr + startOffset;
          tmpAddr < (pageAddr + 4096); tmpAddr += objectSize) {
-        uint8_t* memPtr = getSystemMem();
-        uint8_t* memPointer = memPtr + tmpAddr;
+        uint8_t *memPointer = memPtr + tmpAddr;
 
         // copy from memory to data buffer
         std::memset(dataPointerBestDiff, 0, 1024);
@@ -664,6 +614,7 @@ MemCtrl::compressWithBestDiff(Addr pageAddr,
                 baseDataPointerBestDiff[charNum];
         }
 
+        /*
         std::cout << std::hex << pageAddr << " " << tmpAddr
                   << " curr : "
                   << printPageCompLength(
@@ -675,6 +626,7 @@ MemCtrl::compressWithBestDiff(Addr pageAddr,
                   << printPageCompLength(
                          deltaPointerBestDiffBytePtr, objectSize)
                   << std::endl;
+        */
 
         uint32_t compDiffLength = compressObjectLine(
             deltaPointerBestDiffBytePtr, objectSize);
@@ -703,22 +655,14 @@ MemCtrl::compressObject()
     uint32_t compressBestSize = 0;
     uint32_t compressBestBaseSize = 0;
 
-    // 1024 Byte
-    uint8_t* dataPointer = (uint8_t*)std::malloc(1024);
-    std::memset(dataPointer, 0, 1024);
+    // Temporary buffers (1024 bytes each).
+    std::unique_ptr<uint8_t[]> dataPointer(new uint8_t[1024]());
+    std::unique_ptr<uint8_t[]> deltaPointer(new uint8_t[1024]());
+    std::unique_ptr<uint8_t[]> baseDataPointer(new uint8_t[1024]());
 
-    uint8_t* deltaPointer = (uint8_t*)std::malloc(1024);
-    std::memset(deltaPointer, 0, 1024);
-
-    uint8_t* baseDataPointer = (uint8_t*)std::malloc(1024);
-    std::memset(baseDataPointer, 0, 1024);
-
-    // 1024 Byte
-    dataPointerBestDiff = (uint32_t*)std::malloc(1024);
-
-    deltaPointerBestDiff = (uint32_t*)std::malloc(1024);
-
-    baseDataPointerBestDiff = (uint32_t*)std::malloc(1024);
+    dataPointerBestDiff = new uint32_t[1024 / sizeof(uint32_t)]();
+    deltaPointerBestDiff = new uint32_t[1024 / sizeof(uint32_t)]();
+    baseDataPointerBestDiff = new uint32_t[1024 / sizeof(uint32_t)]();
 
     dataPointerBestDiffBytePtr =
         reinterpret_cast<uint8_t*>(dataPointerBestDiff);
@@ -727,33 +671,41 @@ MemCtrl::compressObject()
     baseDataPointerBestDiffBytePtr =
         reinterpret_cast<uint8_t*>(baseDataPointerBestDiff);
 
-    for (auto iter : *pageObjectSizePtr) {
-        Addr tmpPageAddr = 0;
-        translate(iter.first, tmpPageAddr);
+    struct PageCompressionResult
+    {
+        uint32_t lcpSize = 0;
+        uint32_t compressoSize = 0;
+        uint32_t blkSize = 0;
+        uint32_t blkDiffSize = 0;
+        uint32_t objSize = 0;
+        uint32_t diffSize = 0;
+        uint32_t bestSize = 0;
+        uint32_t bestBaseSize = 0;
+    };
 
-        std::pair<Addr, Addr> objOffset = iter.second;
-        uint32_t objectSize = objOffset.first;
-        uint32_t startOffset = objOffset.second % objectSize;
-        uint32_t offset = objOffset.second;
+    auto compressPage = [&](Addr pageAddr,
+                            uint32_t objectSize,
+                            uint32_t startOffset,
+                            uint32_t offset) -> PageCompressionResult {
+        PageCompressionResult res;
 
         uint32_t compBlkPageSize = 0;
         uint32_t compBlkDiffPageSize = 0;
         uint32_t compObjectPageSize = 0;
         uint32_t compDiffPageSize = 0;
         uint32_t compBestPageSize = 0;
-
         uint32_t compBestDiffPageSize = 0;
 
         uint32_t idx = 0;
-
         std::vector<uint32_t> compLengthVec;
 
-        for (Addr tmpAddr = tmpPageAddr; tmpAddr < tmpPageAddr + 4096;
+        // First, compress the page in fixed 64-byte blocks
+        // and record per-block compressed lengths and deltas.
+        for (Addr tmpAddr = pageAddr; tmpAddr < pageAddr + 4096;
              tmpAddr += 64, idx++) {
             compressor->updateBlockSize(64);
-            uint8_t* memPtr = getSystemMem();
-
-            uint8_t* memPointer= memPtr + tmpAddr;
+            uint8_t *memPtr = getSystemMem();
+            uint8_t *memPointer = memPtr + tmpAddr;
 
             uint32_t compLength = 0;
 
@@ -779,8 +731,8 @@ MemCtrl::compressObject()
 
             // diff at block size
             if (idx == 0) {
-                std::memset(baseDataPointer, 0, 64);
-                std::memcpy(baseDataPointer, memPointer, 64);
+                std::memset(baseDataPointer.get(), 0, 64);
+                std::memcpy(baseDataPointer.get(), memPointer, 64);
                 compBlkDiffPageSize += 64;
             } else {
                 for (uint32_t charNum = 0; charNum < 64; charNum++) {
@@ -788,84 +740,74 @@ MemCtrl::compressObject()
                         baseDataPointer[charNum] ^ memPointer[charNum];
                 }
                 uint32_t compDiffLength = std::min(
-                    compressObjectLine(deltaPointer, 64),
+                    compressObjectLine(deltaPointer.get(), 64),
                     compressObjectLine(memPointer, 64));
 
                 compBlkDiffPageSize += (compDiffLength << comp_shift);
             }
-
         }
 
+        // Compute LCP and Compresso sizes for this page.
         uint32_t lcpPageSize = 0;
-
         uint32_t compressoPageSize = 0;
-
         computeCompPageSize(compLengthVec, lcpPageSize, compressoPageSize);
 
-        compLCPSize += getAlignedPageSize(lcpPageSize, 64);
-
-        compCompressoSize += getAlignedPageSize(compressoPageSize, 64);
+        res.lcpSize = getAlignedPageSize(lcpPageSize, 64);
+        res.compressoSize = getAlignedPageSize(compressoPageSize, 64);
 
         compBlkPageSize = getAlignedPageSize(compBlkPageSize, 64);
+        compBlkDiffPageSize = getAlignedPageSize(compBlkDiffPageSize, 64);
 
-        compressBlkSize += compBlkPageSize;
+        res.blkSize = compBlkPageSize;
+        res.blkDiffSize = compBlkDiffPageSize;
 
-        compBlkDiffPageSize =
-            getAlignedPageSize(compBlkDiffPageSize, 64);
+        // If the object size is a full block (or 0), reuse the block-level
+        // compression directly.
+        if (objectSize == 64 || objectSize == 0) {
+            compObjectPageSize = compBlkPageSize;
+            compDiffPageSize = std::min(compBlkPageSize, compBlkDiffPageSize);
 
-        compressBlkDiffSize += compBlkDiffPageSize;
-
-            if (objectSize == 64 || objectSize == 0) {
-                compObjectPageSize = compBlkPageSize;
-                compressObjSize += compObjectPageSize;
-                compDiffPageSize =
-                    std::min(compBlkPageSize, compBlkDiffPageSize);
-                compressDiffSize += compObjectPageSize;
-
-                compBestPageSize = compDiffPageSize;
-                compBestDiffPageSize = compDiffPageSize;
-                compressBestSize += compBestPageSize;
-                compressBestBaseSize += compBestPageSize;
-            } else {
+            compBestPageSize = compDiffPageSize;
+            compBestDiffPageSize = compDiffPageSize;
+        } else {
+            // Compress variable-sized objects within the page.
             compressor->updateBlockSize(objectSize);
 
             if (startOffset != 0) {
-                uint8_t* memPtr = getSystemMem();
-                uint8_t* memPointer = memPtr + tmpPageAddr;
-                std::memset(dataPointer, 0, 1024);
-                std::memcpy(dataPointer, memPointer, objectSize);
+                uint8_t *memPtr = getSystemMem();
+                uint8_t *memPointer = memPtr + pageAddr;
+                std::memset(dataPointer.get(), 0, 1024);
+                std::memcpy(dataPointer.get(), memPointer, objectSize);
 
                 compObjectPageSize += startOffset;
                 compDiffPageSize += startOffset;
             }
 
-            uint32_t idx = 0;
+            uint32_t objIdx = 0;
 
-            for (Addr tmpAddr = tmpPageAddr + startOffset;
-                 tmpAddr < (tmpPageAddr + 4096);
-                 tmpAddr += objectSize, idx++) {
-                uint8_t* memPtr = getSystemMem();
-                uint8_t* memPointer = memPtr + tmpAddr;
+            for (Addr tmpAddr = pageAddr + startOffset;
+                 tmpAddr < (pageAddr + 4096);
+                 tmpAddr += objectSize, objIdx++) {
+                uint8_t *memPtr = getSystemMem();
+                uint8_t *memPointer = memPtr + tmpAddr;
 
                 // copy from memory to data buffer
-                std::memset(dataPointer, 0, 1024);
-                std::memcpy(dataPointer, memPointer, objectSize);
+                std::memset(dataPointer.get(), 0, 1024);
+                std::memcpy(dataPointer.get(), memPointer, objectSize);
 
                 // compress object
                 uint32_t compObjLength =
-                    compressObjectLine(dataPointer, objectSize);
+                    compressObjectLine(dataPointer.get(), objectSize);
                 compObjectPageSize += (compObjLength << comp_shift);
 
                 // compress object difference
-                if (idx == 0) {
-                    uint8_t* memPointer =
-                        memPtr + tmpPageAddr + offset;
+                if (objIdx == 0) {
+                    uint8_t *basePtr = memPtr + pageAddr + offset;
                     // store base data
-                    std::memcpy(baseDataPointer, memPointer, objectSize);
-                    uint32_t compObjLength = compressObjectLine(
-                        baseDataPointer, objectSize);
-                    compDiffPageSize += (compObjLength << comp_shift);
-
+                    std::memcpy(baseDataPointer.get(), basePtr, objectSize);
+                    uint32_t baseCompLen = compressObjectLine(
+                        baseDataPointer.get(), objectSize);
+                    compDiffPageSize += (baseCompLen << comp_shift);
                 } else {
                     for (uint32_t charNum = 0; charNum < objectSize;
                          charNum++) {
@@ -875,17 +817,16 @@ MemCtrl::compressObject()
                     }
 
                     uint32_t compDiffLength =
-                        compressObjectLine(deltaPointer, objectSize);
+                        compressObjectLine(deltaPointer.get(), objectSize);
 
-                    getDeltaResult(baseDataPointer, dataPointer,
-                                   deltaPointer, objectSize);
+                    getDeltaResult(baseDataPointer.get(), dataPointer.get(),
+                                   deltaPointer.get(), objectSize);
 
                     uint32_t compMinusLength =
-                        compressObjectLine(deltaPointer, objectSize);
+                        compressObjectLine(deltaPointer.get(), objectSize);
 
                     compDiffLength =
                         std::min(compObjLength, compDiffLength);
-
                     compDiffLength =
                         std::min(compObjLength, compMinusLength);
 
@@ -895,48 +836,55 @@ MemCtrl::compressObject()
 
             compObjectPageSize =
                 getAlignedPageSize(compObjectPageSize, 64);
-            compressObjSize += compObjectPageSize;
-
             compDiffPageSize =
                 getAlignedPageSize(compDiffPageSize, 64);
 
             compBestDiffPageSize = compressWithBestDiff(
-                tmpPageAddr, objectSize, startOffset);
+                pageAddr, objectSize, startOffset);
             compBestDiffPageSize =
                 getAlignedPageSize(compBestDiffPageSize, 64);
 
-            compressDiffSize += compDiffPageSize;
-
             compBestPageSize =
                 std::min(compBlkPageSize, compDiffPageSize);
-
-            compressBestSize += compBestPageSize;
-
-            compBestPageSize =
-                std::min(compBestPageSize, compBestDiffPageSize);
-
-            compressBestBaseSize += compBestPageSize;
         }
 
-        // only print one of every 16 pages to avoid too much output
-        //  int32_t randNum = rand() % 16;
-        // if (randNum == 0) {
-        std::cout << std::hex << "PageAddr: " << tmpPageAddr
-                  << std::dec << " objectSize " << objectSize
-                  << " blk/Obj/Diff/BDiff: " << compBlkPageSize << " / "
-                  << compObjectPageSize << "/" << compDiffPageSize << "/"
-                  << compBestDiffPageSize << std::endl;
-        // }
+        res.objSize = compObjectPageSize;
+        res.diffSize = compDiffPageSize;
 
+        // Best size is the better of block-diff and object-diff.
+        compBestPageSize =
+            std::min(compBestPageSize, compBestDiffPageSize);
+        res.bestSize = compBestPageSize;
+        res.bestBaseSize = compBestPageSize;
+
+        return res;
+    };
+
+    for (const auto &entry : *pageObjectSizePtr) {
+        Addr pageAddr = 0;
+        translate(entry.first, pageAddr);
+
+        std::pair<Addr, Addr> objOffset = entry.second;
+        uint32_t objectSize = objOffset.first;
+        uint32_t startOffset = objOffset.second % objectSize;
+        uint32_t offset = objOffset.second;
+
+        auto pageRes = compressPage(pageAddr, objectSize, startOffset, offset);
+
+        compLCPSize += pageRes.lcpSize;
+        compCompressoSize += pageRes.compressoSize;
+        compressBlkSize += pageRes.blkSize;
+        compressBlkDiffSize += pageRes.blkDiffSize;
+        compressObjSize += pageRes.objSize;
+        compressDiffSize += pageRes.diffSize;
+        compressBestSize += pageRes.bestSize;
+        compressBestBaseSize += pageRes.bestBaseSize;
     }
 
-    free(dataPointer);
-    free(baseDataPointer);
-    free(deltaPointer);
-
-    free(dataPointerBestDiff);
-    free(baseDataPointerBestDiff);
-    free(deltaPointerBestDiff);
+    // Release scratch buffers for best-diff compression path.
+    delete[] dataPointerBestDiff;
+    delete[] baseDataPointerBestDiff;
+    delete[] deltaPointerBestDiff;
 
     if (compressBlkSize == 0)
         return;

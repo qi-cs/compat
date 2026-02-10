@@ -44,12 +44,6 @@
 
 #include <cassert>
 #include <cstdint>
-#include <list>
-#include <map>
-#include <queue>
-#include <set>
-#include <vector>
-
 #include "arch/generic/mmu.hh"
 #include "arch/generic/tlb.hh"
 #include "base/flags.hh"
@@ -67,9 +61,11 @@ namespace gem5
 
 struct BaseO3CPUParams;
 
-namespace memory {
-    class MemCtrl;
+namespace memory
+{
+class MemCtrl;
 }
+
 namespace o3
 {
 
@@ -183,7 +179,6 @@ class ObjectInfo
 public:
     uint32_t objSize = 0;
     Addr lastTouchedAddr = 0;
-    std::set<Addr> touchedUniqBlk;
     uint32_t counter = 0;
 };
 
@@ -195,7 +190,8 @@ template <typename Key, typename Value>
 class LRUCache
 {
 public:
-    void put(const Key& key, const Value& value, bool& evict, Key& evictKey) {
+    void put(const Key& key, const Value& value, bool& evict, Key& evictKey)
+    {
         evict = false;
 
         auto it = cacheMap_.find(key);
@@ -271,7 +267,7 @@ class LSQ
 
     std::map<uint32_t, uint64_t> objectSizeCnter;
 
-    // Object,representative pc
+    // Object, representative pc
     std::map<Addr, uint32_t> objectsPC;
 
     // pc , counter
